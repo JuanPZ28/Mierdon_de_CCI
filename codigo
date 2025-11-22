@@ -1,0 +1,47 @@
+# -----------------------------------------------------------
+# Generación del dataset hidrometeorológico para el proyecto
+# -----------------------------------------------------------
+
+library(tidyverse)
+set.seed(123)
+
+# Parámetros
+sectors <- 1:5
+dates <- seq.Date(as.Date("2020-01-01"), as.Date("2022-12-31"), by = "day")
+
+# Características de cada zona
+zones <- tibble(
+  sector_id = sectors,
+  slope = runif(5, 3, 15),                    # pendiente (%)
+  impervious_pct = sample(20:80, 5),          # % impermeabilización
+  land_use = sample(c("Urbano","Residencial","Industrial","Rural"), 5, replace = TRUE),
+  flood_threshold_m = runif(5, 1.0, 1.6)      # umbral de inundación (m)
+)
+
+# Función para simular nivel de agua según lluvia, imperm. y pendiente
+simulate_water_level <- function(precip, imp, slope) {
+  base <- precip * (imp / 100) * 0.015
+  slope_effect <- max(0.3, 2 / slope)
+  noise <- rnorm(1, 0, 0.05)
+  return(base * slope_effect + noise)
+}
+
+# Crear dataset diario
+dataset <- expand_grid(
+  date = dates,
+  sector_id = sectors
+) %>%
+  left_join(zones, by="sector_id") %>%
+  mutate(
+    precip_mm = rgamma(n(), shape=2, scale=5),  # lluvia diaria realista (0-60 mm)
+    water_level_m = pmax(
+      0,
+      mapply(simulate_water_level, precip_mm, impervious_pct, slope)
+    )
+  )
+
+# Ver primeras filas
+head(dataset)
+
+# Exportar (opcional)
+# write.csv(dataset, "dataset_inundacion.csv", row.names = FALSE)
