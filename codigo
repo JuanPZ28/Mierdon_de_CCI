@@ -3,7 +3,7 @@ library(lubridate)
 library(e1071)
 set.seed(123)
 
-# 1. Generar dataset---------------------------------------------------------------------------------------------------------------------------------------------
+# 1. Generar dataset ------------------------------------------------------------------------------
 
 sectores <- 1:5
 fechas <- seq.Date(as.Date("2020-01-01"), as.Date("2025-11-01"), by = "day")
@@ -33,9 +33,7 @@ dataset <- expand_grid(
     nivel_agua_m = pmax(0, mapply(simular_nivel_agua, precipitacion_mm, porcentaje_impermeable, pendiente))
   )
 
-# 2. Ajuste dinámico de umbral para asegurar clases balanceadas-------------------------------------------------------------------------------------------------
-
-
+# 2. Ajuste dinámico del umbral para generar la variable objetivo
 umbral_factor <- 0.7
 
 repeat {
@@ -44,24 +42,24 @@ repeat {
       umbral_adj = umbral_inundacion_m * umbral_factor,
       riesgo_inundacion = if_else(nivel_agua_m >= umbral_adj, "Inunda", "No_inunda")
     )
-
+  
   tabla <- table(dataset$riesgo_inundacion)
   porcentaje_inunda <- tabla["Inunda"] / sum(tabla)
-
+  
   if (!is.na(porcentaje_inunda) && porcentaje_inunda > 0.05) break
-
-  # reducir umbral para producir más "Inunda"
+  
   umbral_factor <- umbral_factor * 0.9
 }
 
 dataset$riesgo_inundacion <- as.factor(dataset$riesgo_inundacion)
 
-print(table(dataset$riesgo_inundacion))
+print(table(dataset$riesgo_inundacion)) # verificar distribución
 
-# 3. Selección de variables-------------------------------------------------------------------------------------------------------------------------------------------
+# 3. Selección de variables para Bayes incluyendo sector_id --------------------------------------
 
 datos_bayes <- dataset %>%
   select(
+    sector_id,
     riesgo_inundacion,
     precipitacion_mm,
     pendiente,
@@ -69,7 +67,7 @@ datos_bayes <- dataset %>%
     nivel_agua_m
   )
 
-# 4. División entrenamiento / prueba---------------------------------------------------------------------------------------------------------------------------------
+# 4. División entrenamiento/prueba -----------------------------------------------------------------
 
 set.seed(456)
 n <- nrow(datos_bayes)
@@ -78,38 +76,45 @@ idx_train <- sample(1:n, size = 0.7 * n)
 train <- datos_bayes[idx_train, ]
 test  <- datos_bayes[-idx_train, ]
 
-# 5. Garantizar que el entrenamiento tenga ambas clases----------------------------------------------------------------------------------------------------------------
+# 5. Entrenamiento modelo Bayes -------------------------------------------------------------------
 
-if (length(unique(train$riesgo_inundacion)) < 2) {
-  cat("Entrenamiento sin ambas clases. \n")
+modelo_bayes <- naiveBayes(
+  riesgo_inundacion ~ precipitacion_mm + pendiente + porcentaje_impermeable + nivel_agua_m,
+  data = train
+)
 
-  clase_mayor <- train %>% filter(riesgo_inundacion == "No_inunda")
-  clase_menor <- train %>% filter(riesgo_inundacion == "Inunda")
-
-  # duplicar la clase menor hasta igualar tamaño
-  clase_menor_rep <- clase_menor[sample(1:nrow(clase_menor),
-                                        size = nrow(clase_mayor),
-                                        replace = TRUE), ]
-
-  train <- bind_rows(clase_mayor, clase_menor_rep)
-}
-
-print(table(train$riesgo_inundacion))
-
-# 6. Entrenamiento Bayes------------------------------------------------------------------------------------------------------------------------------------------------------
-
-modelo_bayes <- naiveBayes(riesgo_inundacion ~ ., data = train)
-print(modelo_bayes)
-
-# 7. Predicciones y evaluación--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# 6. Predicciones y agregar al dataset ------------------------------------------------------------
 
 pred <- predict(modelo_bayes, test)
 
-matriz <- table(Predicho = pred, Real = test$riesgo_inundacion)
-print(matriz)
+test_pred <- test %>%
+  mutate(riesgo_predicho = pred)
 
-precision <- mean(pred == test$riesgo_inundacion)
-cat("\nPrecisión del modelo:", round(precision * 100, 2), "%\n")
+# 7. Gráfica: Proporción de riesgo por sector ----------------------------------------------------
+
+ggplot(test_pred, aes(x = factor(sector_id), fill = riesgo_predicho)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("No_inunda" = "skyblue", "Inunda" = "red")) +
+  labs(
+    title = "Proporción de riesgo de inundación por sector",
+    x = "Sector",
+    y = "Proporción",
+    fill = "Riesgo predicho"
+  ) +
+  theme_minimal()
+
+# 8. Scatter plot: precipitación vs nivel de agua -------------------------------------------------
+
+ggplot(test_pred, aes(x = precipitacion_mm, y = nivel_agua_m, color = riesgo_predicho)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("No_inunda" = "skyblue", "Inunda" = "red")) +
+  labs(
+    title = "Riesgo de inundación según precipitación y nivel de agua",
+    x = "Precipitación (mm)",
+    y = "Nivel de agua (m)",
+    color = "Riesgo predicho"
+  ) +
+  theme_minimal()
 
 
 
