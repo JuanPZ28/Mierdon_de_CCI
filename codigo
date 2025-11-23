@@ -1,24 +1,23 @@
-# -----------------------------------------------------------
-# Generación del dataset hidrometeorológico para el proyecto
-# -----------------------------------------------------------
+
 
 library(tidyverse)
+library(lubridate)
 set.seed(123)
 
 # Parámetros
 sectors <- 1:5
-dates <- seq.Date(as.Date("2020-01-01"), as.Date("2022-12-31"), by = "day")
+dates <- seq.Date(as.Date("2020-01-01"), as.Date("2025-11-1"), by = "day")
 
 # Características de cada zona
 zones <- tibble(
   sector_id = sectors,
-  slope = runif(5, 3, 15),                    # pendiente (%)
-  impervious_pct = sample(20:80, 5),          # % impermeabilización
+  slope = runif(5, 3, 15),
+  impervious_pct = sample(20:80, 5),
   land_use = sample(c("Urbano","Residencial","Industrial","Rural"), 5, replace = TRUE),
-  flood_threshold_m = runif(5, 1.0, 1.6)      # umbral de inundación (m)
+  flood_threshold_m = runif(5, 1.0, 1.6)
 )
 
-# Función para simular nivel de agua según lluvia, imperm. y pendiente
+# Función para simular nivel de agua
 simulate_water_level <- function(precip, imp, slope) {
   base <- precip * (imp / 100) * 0.015
   slope_effect <- max(0.3, 2 / slope)
@@ -26,22 +25,154 @@ simulate_water_level <- function(precip, imp, slope) {
   return(base * slope_effect + noise)
 }
 
-# Crear dataset diario
+# Crear dataset completo
 dataset <- expand_grid(
   date = dates,
   sector_id = sectors
 ) %>%
   left_join(zones, by="sector_id") %>%
   mutate(
-    precip_mm = rgamma(n(), shape=2, scale=5),  # lluvia diaria realista (0-60 mm)
+    precip_mm = rgamma(n(), shape=2, scale=5),
     water_level_m = pmax(
       0,
       mapply(simulate_water_level, precip_mm, impervious_pct, slope)
     )
   )
 
-# Ver primeras filas
-head(dataset)
 
-# Exportar (opcional)
-# write.csv(dataset, "dataset_inundacion.csv", row.names = FALSE)
+# 1. HISTOGRAMA DE PRECIPITACIÓN PROMEDIO POR AÑO--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+precip_por_anio <- dataset %>%
+  mutate(anio = year(date)) %>%
+  group_by(anio) %>%
+  summarise(precipitacion_promedio = mean(precip_mm))
+
+ggplot(precip_por_anio, aes(x = as.factor(anio), y = precipitacion_promedio)) +
+  geom_col(fill = "skyblue", color = "black") +
+  labs(
+    title = "Precipitación promedio por año",
+    x = "Año",
+    y = "Precipitación promedio (mm)"
+  ) +
+  theme_minimal()
+
+
+# 2. HISTOGRAMA DE PRECIPITACIÓN PROMEDIO POR MES-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+precip_por_mes <- dataset %>%
+  mutate(
+    anio = year(date),
+    mes = month(date, label = TRUE, abbr = TRUE)
+  ) %>%
+  group_by(mes) %>%
+  summarise(precipitacion_promedio = mean(precip_mm))
+
+ggplot(precip_por_mes, aes(x = mes, y = precipitacion_promedio)) +
+  geom_col(fill = "steelblue", color = "black") +
+  labs(
+    title = "Promedio de precipitación por mes (2020–2022)",
+    x = "Mes",
+    y = "Precipitación promedio (mm)"
+  ) +
+  theme_minimal()
+
+
+# 3. HISTOGRAMA DEL NIVEL DE AGUA PROMEDIO POR AÑO-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+nivel_por_anio <- dataset %>%
+  mutate(anio = year(date)) %>%
+  group_by(anio) %>%
+  summarise(nivel_promedio = mean(water_level_m))
+
+ggplot(nivel_por_anio, aes(x = as.factor(anio), y = nivel_promedio)) +
+  geom_col(fill = "lightgreen", color = "black") +
+  labs(
+    title = "Nivel de agua promedio por año",
+    x = "Año",
+    y = "Nivel promedio del agua (m)"
+  ) +
+  theme_minimal()
+
+# 4. HISTOGRAMA DEL NIVEL DE AGUA PROMEDIO POR MES-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+nivel_por_mes <- dataset %>%
+  mutate(mes = month(date, label = TRUE, abbr = TRUE)) %>%
+  group_by(mes) %>%
+  summarise(nivel_promedio = mean(water_level_m))
+
+ggplot(nivel_por_mes, aes(x = mes, y = nivel_promedio)) +
+  geom_col(fill = "orange", color = "black") +
+  labs(
+    title = "Nivel promedio del agua por mes",
+    x = "Mes",
+    y = "Nivel promedio del agua (m)"
+  ) +
+  theme_minimal()
+
+# PRECIPITACIÓN PROMEDIO POR ZONA (SECTOR)------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+precipitacion_por_zona <- dataset %>%
+  group_by(sector_id) %>%
+  summarise(
+    precip_promedio = mean(precip_mm),
+    .groups = "drop"
+  )
+
+ggplot(precipitacion_por_zona, aes(x = factor(sector_id), y = precip_promedio)) +
+  geom_col(fill = "skyblue", color = "black") +
+  labs(
+    title = "Precipitación promedio por zona",
+    x = "Sector",
+    y = "Precipitación promedio (mm)"
+  ) +
+  theme_minimal()
+
+# NIVEL DEL AGUA PROMEDIO POR ZONA (SECTOR)---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+nivel_agua_por_sector <- dataset %>%
+  group_by(sector_id) %>%
+  summarise(
+    nivel_promedio = mean(water_level_m),
+    .groups = "drop"
+  )
+
+ggplot(nivel_agua_por_sector, aes(x = factor(sector_id), y = nivel_promedio)) +
+  geom_col(fill = "lightblue", color = "black") +
+  labs(
+    title = "Nivel promedio del agua por zona",
+    x = "Sector",
+    y = "Nivel promedio del agua (m)"
+  ) +
+  theme_minimal()
+
+
+# BOXPLOT DE PRECIPITACIÓN POR LOCALIDAD (SECTOR)------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+ggplot(dataset, aes(x = factor(sector_id), y = precip_mm)) +
+  geom_boxplot(fill = "skyblue", color = "black") +
+  labs(
+    title = "Boxplot de la precipitación por localidad",
+    x = "Localidad (Sector)",
+    y = "Precipitación (mm)"
+  ) +
+  theme_minimal()
+
+
+# BOXPLOT DEL NIVEL DEL AGUA POR LOCALIDAD (SECTOR)----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+ggplot(dataset, aes(x = factor(sector_id), y = water_level_m)) +
+  geom_boxplot(fill = "lightblue", color = "black") +
+  labs(
+    title = "Boxplot del nivel del agua por localidad",
+    x = "Localidad (Sector)",
+    y = "Nivel del agua (m)"
+  ) +
+  theme_minimal()
